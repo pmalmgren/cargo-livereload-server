@@ -4,6 +4,7 @@ use structopt::StructOpt;
 
 use notify::{Watcher, RecursiveMode, RawEvent, raw_watcher};
 use std::sync::mpsc::channel;
+use tokio::sync::mpsc;
 
 use std::io::Write;
 use chrono::Local;
@@ -14,6 +15,21 @@ use log::LevelFilter;
 struct Cli {
     #[structopt(parse(from_os_str))]
     file_path: Option<std::path::PathBuf>,
+}
+
+enum FileChangeOperation {
+    Chmod = 1,
+    CloseWrite,
+    Create,
+    Remove,
+    Rename,
+    Rescan,
+    Write,
+}
+
+struct FileChange {
+    path: String,
+    operation: FileChangeOperation,
 }
 
 #[tokio::main]
@@ -37,17 +53,28 @@ pub async fn main() {
         None => ".".to_string(),
     };
 
-    let (tx, rx) = channel();
-    let mut watcher = raw_watcher(tx).unwrap();
-    watcher.watch(file_path, RecursiveMode::Recursive).unwrap();
+    let (tx, mut rx) = mpsc::channel(32);
 
-    loop {
-        match rx.recv() {
-           Ok(RawEvent{path: Some(path), op: Ok(op), cookie}) => {
-               log::info!("{:?} {:?} ({:?})", op, path, cookie)
-           },
-           Ok(event) => log::warn!("broken event: {:?}", event),
-           Err(e) => log::error!("watch error: {:?}", e),
+    tokio::spawn(async move {
+        let (watcher_tx, watcher_rx) = channel();
+        let mut watcher = raw_watcher(watcher_tx).unwrap();
+        watcher.watch(file_path, RecursiveMode::Recursive).unwrap();
+        log::info!("File watcher started...");
+
+        loop {
+            let msg = match watcher_rx.recv() {
+               Ok(RawEvent{path: Some(path), op: Ok(op), cookie}) => {
+                    // Ok(FileChange{path: path.to_string(), operation: 
+                   format!("{:?} {:?} ({:?})", op, path, cookie)
+               },
+               Ok(event) => format!("broken event: {:?}", event),
+               Err(e) => format!("watch error: {:?}", e),
+            };
+            tx.send(msg).await;
         }
+    });
+
+    while let Some(message) = rx.recv().await {
+        log::info!("Got = {}", message);
     }
 }
