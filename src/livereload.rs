@@ -6,7 +6,7 @@ use warp::Filter;
 use serde::{Deserialize, Serialize};
 // use serde_json::Result as SerdeResult;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct ClientHandshake {
     command: String,
     protocols: Vec<String>,
@@ -34,7 +34,10 @@ async fn user_connected(ws: WebSocket) {
             Err(_e) => ClientState::Invalid,
             Ok(msg_str) => match serde_json::from_str::<ClientHandshake>(msg_str) {
                 Err(_e) => ClientState::Invalid,
-                Ok(handshake) => ClientState::Handshake(handshake),
+                Ok(handshake) => {
+                    log::info!("Received message: {:?}", handshake);
+                    ClientState::Handshake(handshake)
+                }
             },
         },
         None => {
@@ -47,18 +50,19 @@ async fn user_connected(ws: WebSocket) {
         }
     };
 
+
     match state {
         ClientState::Handshake(client_handshake) => {
             if !client_handshake
                 .protocols
-                .contains(&"http://livereload.com/protocols-official-7".to_string())
+                .contains(&"http://livereload.com/protocols/official-7".to_string())
             {
                 log::error!("we can only handle version 7 of livereload");
                 return;
             }
             let resp = ServerHandshake {
                 command: "hello".to_string(),
-                protocols: vec!["http://livereload.com/protocols-official-7".to_string()],
+                protocols: vec!["http://livereload.com/protocols/official-7".to_string()],
             };
             let resp_text = serde_json::to_string(&resp).unwrap();
             wstx.send(warp::ws::Message::text(resp_text.as_str()))
@@ -103,8 +107,8 @@ mod test {
         let handshake = ClientHandshake {
             command: "hello".to_string(),
             protocols: vec![
-                "http://livereload.com/protocols-official-6".to_string(),
-                "http://livereload.com/protocols-official-7".to_string(),
+                "http://livereload.com/protocols/official-6".to_string(),
+                "http://livereload.com/protocols/official-7".to_string(),
             ],
             ver: "3.3.2".to_string(),
         };
@@ -121,7 +125,7 @@ mod test {
         assert_eq!(resp_handshake.command, "hello".to_string());
         assert_eq!(
             resp_handshake.protocols[0],
-            "http://livereload.com/protocols-official-7".to_string()
+            "http://livereload.com/protocols/official-7".to_string()
         );
     }
 }
